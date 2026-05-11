@@ -31,6 +31,32 @@ Read the following references before producing any output:
 | Parsed data + threshold routing + conditional warning suffix | `weather-advisor.go` |
 | Runtime slice → MapOver fan-out → per-item sub-graph → aggregation | `hn-topic-brief.go` |
 | Two AI models in series — Claude generates, Gemini independently verifies | `faithful-summary.go` |
+| Strict parse/validate op + AI-driven minimal-mutation retry on bad input (`WithRepair`) | `with-repair.go` |
+
+# AI recovery wrapper (WithRepair) placement
+
+WithRepair is most suitable at the **upstream boundary** of the DAG — wrap the op
+that first ingests outside input (user text, fetched payloads, untrusted JSON,
+third-party API responses) so the workflow validates and, if necessary, repairs
+that input before anything downstream depends on it. Once a value has passed a
+WithRepair stage, downstream vertices can treat it as well-formed and skip
+defensive re-parsing.
+
+**Do not** wrap an AI op (`AIComputeOp` and its embedders) with `WithRepair` to
+validate its output. AI ops support in-conversation self-repair: have the `Out`
+type's `ParseAIResponse` return `*library.ErrRepairable` on a fixable miss, and
+the op will append a follow-up turn in the same LLM conversation rather than
+opening a fresh repair call.
+
+When an AI op is self-validating, the design's **AI Ops Used** entry MUST spell
+out the validation rules — codegen translates each rule into one
+`*library.ErrRepairable` return in `ParseAIResponse`. Examples:
+
+- `score (AIScoreOp, self-repair: must be float in [0, 1])`
+- `category (AICategoryOp, self-repair: must be one of {bug, feature, question})`
+- `summary (AISummaryOp, self-repair: must be wrapped in <summary>…</summary>)`
+
+Do not add a separate `[AI:WithRepair]` vertex for any of these.
 
 # Steps
 
@@ -54,11 +80,14 @@ Respond ONLY with the following structured document. No Go code. No markdown out
 ## Workflow: [short name]
 
 ### ASCII DAG
-[diagram showing vertices and data flow with → arrows]
+[diagram showing vertices and data flow with → arrows; vertices wrapped by
+`library.WithRepair` carry a trailing `[AI:WithRepair]` tag — see
+"AI-WRAPPED VERTICES — RENDERER HINT" in `references/design-rules.md`]
 
 ### Vertices
 List each vertex in topological order:
 N. **vertex_name** — `OpName` — [Condition: pred_name] — Params: key=value, ...
+   - Wrapper: `WithRepair` (input_field=FieldName, max_attempts=N)   — only when WithRepair-wrapped
    - In: FieldName ← `wire_name`
    - Out: FieldName → `wire_name`
 
@@ -104,7 +133,10 @@ For each op not found in the library:
 
 ### AI Ops Used
 For each AI op in the design:
-- **vertex_name** (`OpName`): the `operation` param text
+- **vertex_name** (`OpName`): the `operation` param text — phrase it so it
+  unambiguously identifies the task. Pair it with the validation rules listed
+  above (for self-validating ops) so the codegen step can write an
+  `ExpectedFormat()` precise enough that parsing succeeds on the first turn.
 
 ### Design Rationale
 Key decisions: why certain operations are deterministic vs AI, any tradeoffs

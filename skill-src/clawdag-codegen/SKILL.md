@@ -200,6 +200,166 @@ Use `clawdag "github.com/akennis/clawdag-go/library"` as the named import when e
 `AIComputeOp`. When `Out` is a struct, implement `ExpectedFormat() string` and
 `ParseAIResponse(string) error` on `*Out` to replace the default format prompt and parser.
 
+### Prompt precision: design for first-try parse success
+Every retry is an extra API call. `operation` + `ExpectedFormat()` together
+must fully specify what the model emits so that `ParseAIResponse` succeeds on
+turn 1; self-repair is a *safety net* for residual misses, not a substitute
+for a precise prompt.
+
+`ExpectedFormat()` should pin down, at minimum:
+- the **exact shape** (single token, CSV, tag-wrapped, JSON envelope, …);
+- the **value domain** when applicable (range, enum, regex);
+- the **prose policy** (e.g. "No prose, no markdown, no surrounding whitespace");
+- a **literal example** of a valid response when the shape is non-obvious.
+
+Examples:
+- Good: `"Reply with a single float in [0, 1]. No prose."`
+- Good: `"Reply with one of: bug, feature, question. No prose, no quotes."`
+- Good: `"Reply wrapped as <sum>N</sum> where N is the integer sum. Example: <sum>15</sum>. No surrounding text."`
+- Weak: `"Return the score."` — no shape, no domain → forces retries.
+
+When `operation` + `ExpectedFormat()` are tight, the default `max_retries: 3`
+typically never fires. If a particular op routinely needs repair turns,
+tighten the prompt first; raise `max_retries` only after that.
+
+### In-conversation self-repair (preferred over wrapping AI ops with `WithRepair`)
+`ParseAIResponse` can opt the op into **in-conversation repair** by returning
+`*clawdag.ErrRepairable{Prompt, Cause}`. When it does, `AIComputeOp.Run` keeps
+the same conversation open: it appends the model's prior response as an
+assistant turn, sends `ErrRepairable.Prompt` as the next user turn, and re-asks
+within the same `max_retries` budget. The model retains its prior reasoning
+context, so the correction is typically one short follow-up turn — no second
+cold call, no need to wrap the AI op with `WithRepair`.
+
+```go
+// Out type validates its own response; returns *ErrRepairable on fixable misses.
+type ScoreOut struct{ Value float64 }
+
+func (o *ScoreOut) ExpectedFormat() string {
+    return "Reply with a single float in [0, 1]. No prose."
+}
+
+func (o *ScoreOut) ParseAIResponse(response string) error {
+    f, err := strconv.ParseFloat(strings.TrimSpace(response), 64)
+    if err != nil {
+        return &clawdag.ErrRepairable{
+            Prompt: "Your last response was not a number. Reply with one float in [0, 1].",
+            Cause:  err,
+        }
+    }
+    if f < 0 || f > 1 {
+        return &clawdag.ErrRepairable{
+            Prompt: fmt.Sprintf("Your last response %v is outside [0, 1]. Clamp it and reply with just the number.", f),
+            Cause:  errors.New("out of range"),
+        }
+    }
+    o.Value = f
+    return nil
+}
+```
+
+Non-`*ErrRepairable` errors from `ParseAIResponse` continue to use the legacy
+single-shot retry (fresh prompt + previous-response feedback) — switch to
+`*ErrRepairable` when threading the conversation gives the model more useful
+context than re-asking from scratch.
+
+**Prompt-content rule.** Unlike `WithRepair` prompts (which must be
+self-contained because re-`Run` starts cold), an AI op's `ErrRepairable.Prompt`
+is a **conversational correction** sent as a follow-up turn. The model still
+has its prior reasoning in context, so prompts should be short and refer to
+"your last response":
+
+- Good (AI op): `"Your last response %v is outside [0, 1]. Reply with just the clamped number."`
+- Wrong (AI op): restating the entire task + input + schema — wastes tokens and confuses the turn.
+- For `WithRepair`: the opposite — always restate input + error + schema, because `Run` re-fires from scratch.
+
+**Retry budget.** `max_retries` caps the *total* attempts in `Run` — stateless
+retries and conversational repair turns share one counter. There is no separate
+repair budget.
+
+**Mode is sticky.** Once `ParseAIResponse` returns `*ErrRepairable` for the
+first time, the op stays in conversational mode for the remainder of `Run`. A
+subsequent envelope/format failure (e.g. malformed JSON in reasoning mode) is
+turned into a corrective user turn on the same conversation rather than a
+fresh prompt with the retry template.
+
+**Reasoning mode.** When the op is run with a logger attached (`{result,
+reasoning}` envelope), the system prompt persists across repair turns — the
+model still emits the envelope shape on the follow-up. Do not restate the
+envelope rule in `ErrRepairable.Prompt`.
+
+**Token cost.** Each repair turn re-sends the full prior history. Keep
+`ParseAIResponse` validations tight (one or two `*ErrRepairable` returns per
+Out type, each with a short corrective prompt) so the typical recovery is one
+follow-up turn.
+
+Use this **instead of** wrapping an AI op with `WithRepair`. Reserve
+`WithRepair` for *deterministic* ops at the input boundary (see above).
+
+## AI recovery wrapper (WithRepair)
+When a deterministic op may fail on structurally-fixable bad input (malformed JSON,
+near-miss enum, missing field, schema-violating record), wrap it via
+`clawdag.RegisterWithRepair` to give it bounded LLM-driven retry. The inner op opts in
+by returning `*clawdag.ErrRepairable{Prompt, Cause}`; the input type opts in by
+implementing `clawdag.RepairableInput` (`UnmarshalRepair(string) error`).
+
+**Where it belongs in the DAG.** WithRepair is most suitable at the **upstream
+boundary** — wrap the op that first ingests outside input (user text, fetched
+payloads, untrusted JSON, third-party API responses) so the workflow validates and,
+if necessary, repairs that input before anything downstream depends on it. Once a
+value has passed a WithRepair stage, downstream vertices can treat it as well-formed
+and skip defensive re-parsing.
+
+```go
+// 1. Inner op returns *clawdag.ErrRepairable on repairable failures.
+//    Prompt MUST be self-contained — include the current input verbatim,
+//    the validation error, and the exact expected response shape.
+func (op *ParseTicketOp) Run(_ context.Context) error {
+    if err := json.Unmarshal([]byte(op.Raw.Text), &op.Result); err != nil {
+        return &clawdag.ErrRepairable{
+            Prompt: fmt.Sprintf("Below is invalid ticket JSON (error: %v). %s\n\nInput:\n%s\n\nOutput corrected JSON only.",
+                err, ticketSchemaSpec, op.Raw.Text),
+            Cause:  err,
+        }
+    }
+    return nil
+}
+
+// 2. Input type implements RepairableInput so the wrapper can deserialize
+//    the LLM's response back into a typed value.
+type TicketRaw struct{ Text string }
+func (t *TicketRaw) UnmarshalRepair(s string) error { t.Text = strings.TrimSpace(s); return nil }
+
+// 3. Register the wrapped op from init() under a distinct name.
+func init() {
+    clawdag.RegisterWithRepair[*ParseTicketOp](
+        "ParseTicketRepair",
+        func() *ParseTicketOp { return &ParseTicketOp{} },
+        clawdag.RepairConfig{
+            InputField:   "Raw",   // required: the inner field the LLM may mutate
+            MaxAttempts:  3,
+            PromptPrefix: "You are a strict JSON corrector. Output corrected JSON only.\n\n",
+        },
+    )
+}
+```
+
+Wire the wrapped vertex by its **registered name** (`"ParseTicketRepair"`), not the
+inner type name. Input/output field names match the inner op exactly:
+```go
+Vertex("parse").Op("ParseTicketRepair").Input("Raw", "raw_wire").Output("Result", "parsed_wire")
+```
+
+Use the `clawdag "github.com/akennis/clawdag-go/library"` named import. When the
+field to repair is a struct (not a string wrapper), have the struct's
+`UnmarshalRepair` delegate to `xml.Unmarshal` — XML is preferred over JSON for
+record-shaped repair payloads. See `references/examples/with-repair.go` for both
+string-target and struct-target stages in one workflow.
+
+**Inner op MUST be idempotent or pure** — repair re-executes `Run` with mutated
+input. Do not wrap ops that have side effects (DB writes, network mutations,
+file deletes).
+
 ## Required imports
 ```go
 // Standard library
