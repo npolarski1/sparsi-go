@@ -42,7 +42,7 @@ Read the following references before writing any code:
        github.com/wwz16/dagor => github.com/akennis/dagor v0.0.0
    )
    ```
-5. Run `go get github.com/akennis/clawdag-go@init` in `<output_dir>` — this resolves the `init` branch to its current commit pseudo-version and updates `go.mod` automatically. Remove the `replace` directive for `clawdag-go` that was written in step 4 (it is no longer needed after this step).
+5. Run `go get github.com/akennis/clawdag-go@main` in `<output_dir>` — this resolves the `main` branch to its current commit pseudo-version and updates `go.mod` automatically. Remove the `replace` directive for `clawdag-go` that was written in step 4 (it is no longer needed after this step).
 6. Run `go mod tidy` in `<output_dir>` — this resolves all remaining dependencies (ants, etc.) and writes `go.sum`.
 7. Run `go build ./...` in `<output_dir>` to compile.
 8. If the build fails, read the error output, fix `main.go`, and re-run step 7.
