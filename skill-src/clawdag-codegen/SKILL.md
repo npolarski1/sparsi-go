@@ -47,7 +47,15 @@ Read the following references before writing any code:
 7. Run `go build ./...` in `<output_dir>` to compile.
 8. If the build fails, read the error output, fix `main.go`, and re-run step 7.
 9. Repeat until the build exits 0.
-10. Once the build is successful, notify the user and recommend running the compiled executable (e.g., `./solution` or `solution.exe`) rather than `go run main.go`. Mention any required CLI flags.
+10. **Runtime Validation:** You MUST verify the behavioral correctness of the generated program before finishing. Run the compiled executable with representative sample inputs (based on the original task description).
+    - If CLI flags are required, provide them.
+    - Inspect the output and logs to ensure the workflow is executing the expected vertices and producing the correct results.
+    - Use `slog` level `Debug` if the behavior is opaque.
+11. **Iterate on Runtime Failures:** If the program crashes, produces incorrect results, or fails to meet the task requirements:
+    - Diagnose the root cause from the output/logs.
+    - Fix `main.go` or any custom op implementations.
+    - Repeat from Step 7 (rebuild and re-validate).
+12. Once the build and runtime behavior are both verified, notify the user and recommend running the compiled executable. Mention the exact command and CLI flags used for successful validation.
 
 # Implementation rules
 
