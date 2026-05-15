@@ -34,32 +34,26 @@ Read the following references before writing any code:
    module solution
 
    go <version>
-
-   require (
-       github.com/akennis/sparsi-go v0.0.0-00010101000000-000000000000
-       github.com/wwz16/dagor v0.0.0
-   )
-
-   replace (
-       github.com/akennis/sparsi-go => github.com/akennis/sparsi-go v0.0.0-00010101000000-000000000000
-       github.com/wwz16/dagor => github.com/akennis/dagor v0.0.0
-   )
    ```
-5. Run `go get github.com/akennis/sparsi-go@init` in `<output_dir>` — this resolves the `init` branch to its current commit pseudo-version and updates `go.mod` automatically. Remove the `replace` directive for `sparsi-go` that was written in step 4 (it is no longer needed after this step).
-6. Run `go mod tidy` in `<output_dir>` — this resolves all remaining dependencies (ants, etc.) and writes `go.sum`.
-7. Run `go build ./...` in `<output_dir>` to compile.
-8. If the build fails, read the error output, fix `main.go`, and re-run step 7.
-9. Repeat until the build exits 0.
-10. **Runtime Validation:** You MUST verify the behavioral correctness of the generated program before finishing. Run the compiled executable with representative sample inputs (based on the original task description).
+5. Run the following commands in `<output_dir>` to resolve dependencies:
+   - `go get github.com/akennis/sparsi-go@main`
+   - `go mod edit -replace github.com/wwz16/dagor=github.com/akennis/dagor@latest`
+   - `go get github.com/wwz16/dagor`
+   - `go mod tidy`
+   This ensures the `main` branch of `sparsi-go` is used and the `dagor` dependency is correctly routed.
+6. Run `go build ./...` in `<output_dir>` to compile.
+7. If the build fails, read the error output, fix `main.go`, and re-run step 6.
+8. Repeat until the build exits 0.
+9. **Runtime Validation:** You MUST verify the behavioral correctness of the generated program before finishing. Run the compiled executable with representative sample inputs (based on the original task description).
     - **Live API Keys:** Tests and validation MUST use actual API keys (read from environment variables) for any third-party services (LLMs, etc.) used by the workflow. Do NOT use dummy, mock, or placeholder keys. Ensure your environment has the necessary `CLAUDE_API_KEY`, `GEMINI_API_KEY`, or other required keys set before running.
     - If CLI flags are required, provide them.
     - Inspect the output and logs to ensure the workflow is executing the expected vertices and producing the correct results.
     - Use `slog` level `Debug` if the behavior is opaque.
-11. **Iterate on Runtime Failures:** If the program crashes, produces incorrect results, or fails to meet the task requirements:
+10. **Iterate on Runtime Failures:** If the program crashes, produces incorrect results, or fails to meet the task requirements:
     - Diagnose the root cause from the output/logs.
     - Fix `main.go` or any custom op implementations.
-    - Repeat from Step 7 (rebuild and re-validate).
-12. Once the build and runtime behavior are both verified, notify the user and recommend running the compiled executable. Mention the exact command and CLI flags used for successful validation.
+    - Repeat from Step 6 (rebuild and re-validate).
+11. Once the build and runtime behavior are both verified, notify the user and recommend running the compiled executable. Mention the exact command and CLI flags used for successful validation.
 
 # Implementation rules
 
