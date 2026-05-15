@@ -363,9 +363,11 @@ Do this before or as part of presenting your initial design.
 
 If the user's task implies the use of external data (files, URLs, MCP tools, databases) but does not provide specific details (e.g., paths, commands, retriever names), you MUST NOT invent placeholders or assume they should always be runtime inputs.
 
+**CRITICAL: Do NOT hallucinate MCP server details.** If the user mentions an MCP server by name but does not provide the `url` (for HTTP) or `command` and `args` (for stdio), you MUST ask for them. Do NOT guess the URL based on the server name.
+
 Instead:
 1. Identify the missing data sources.
-2. Ask the user for the specifics (e.g., "What is the path to the file you want to analyze?", "What is the command and arguments for the MCP server?").
+2. Ask the user for the specifics (e.g., "What is the path to the file you want to analyze?", "What is the command and arguments for the MCP server?", "What is the URL for the MCP server?").
 3. Ask if the source should be a **hardcoded constant** (fixed for all runs) or a **runtime input** (different every time).
 
 Do this before or as part of presenting your initial design.

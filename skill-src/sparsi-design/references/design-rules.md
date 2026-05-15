@@ -33,7 +33,11 @@ Canonical AI-appropriate examples:
 6. Any branching or routing based on known categories — use predicates and conditions.
 
 # DETERMINISTIC OPS — PARAMETERS
-When using deterministic ops that require parameters (e.g. `path` for `FileReadOp`, `command` for `MCPCallOp`, `url` for `HTTPGetOp`), ensure these parameters are grounded in the user's request. If the user hasn't specified them, ASK for them (and whether they should be hardcoded or runtime inputs) before or during the design presentation. Do NOT use mock values like "example.com", "test.txt", or "mock_data" in the final approved design.
+When using deterministic ops that require parameters (e.g. `path` for `FileReadOp`, `command` for `MCPCallOp`, `url` for `HTTPGetOp`), ensure these parameters are grounded in the user's request. If the user hasn't specified them, ASK for them (and whether they should be hardcoded or runtime inputs) before or during the design presentation. 
+
+**CRITICAL: Do NOT hallucinate MCP server details.** If the user mentions an MCP server by name but does not provide the `url` (for HTTP) or `command` and `args` (for stdio), you MUST ask for them. Do NOT guess the URL based on the server name.
+
+Do NOT use mock values like "example.com", "test.txt", or "mock_data" in the final approved design.
 
 # NUMERIC TYPE DISCIPLINE
 The library provides parallel `int` and `float64` variants for every standard math operation. Numbers
